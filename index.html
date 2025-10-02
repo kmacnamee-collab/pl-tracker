@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premier League Tracker Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        .form-box { 
+            width: 20px; 
+            height: 20px; 
+            border-radius: 3px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            font-size: 9px; 
+            font-weight: bold; 
+        }
+        .stat-bar {
+            height: 4px;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        .day-column {
+            min-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Icons
+        const RefreshCw = ({ spinning }) => (
+            <svg className={`w-4 h-4 ${spinning ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+        );
+        
+        const Trophy = () => (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
+            </svg>
+        );
+        
+        const ChevronDown = ({ isOpen }) => (
+            <svg className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        );
+
+        const ChartLine = () => (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3v18h18M7 16l4-4 4 4 6-6"/>
+            </svg>
+        );
+        
+        const Newspaper = () => (
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+                <path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/>
+            </svg>
+        );
+        
+        function App() {
+            const BACKEND_URL = 'https://pl-tracker-api.onrender.com';
+            
+            const [activeTab, setActiveTab] = useState('standings');
+            const [standings, setStandings] = useState([]);
+            const [matches, setMatches] = useState([]);
+            const [scorers, setScorers] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [expandedTeam, setExpandedTeam] = useState(null);
+            const [expandedMatch, setExpandedMatch] = useState(null);
+            const [expandedScorer, setExpandedScorer] = useState(null);
+            const [guardianArticles, setGuardianArticles] = useState({});
+            const [loadingArticles, setLoadingArticles] = useState({});
+            const [season, setSeason] = useState('');
+            const [lastUpdate, setLastUpdate] = useState(null);
+            const [sortBy, setSortBy] = useState('position');
+            const [fixturesView, setFixturesView] = useState('this week');
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            async function loadData() {
+                setLoading(true);
+                setError(null);
+                
+                try {
+                    const healthRes = await fetch(`${BACKEND_URL}/api/health`);
+                    if (!healthRes.ok) throw new Error('Backend not responding');
+                    
+                    const [standingsRes, matchesRes, scorersRes] = await Promise.all([
+                        fetch(`${BACKEND_URL}/api/standings`),
+                        fetch(`${BACKEND_URL}/api/matches`),
+                        fetch(`${BACKEND_URL}/api/scorers`)
+                    ]);
+                    
+                    const standingsData = await standingsRes.json();
+                    if (standingsData.standings?.[0]?.table) {
+                        setStandings(standingsData.standings[0].table);
+                        if (standingsData.season) {
+                            setSeason(`${standingsData.season.startDate.slice(0,4)}-${standingsData.season.endDate.slice(0,4)}`);
+                        }
+                    }
+                    
+                    const matchesData = await matchesRes.json();
+                    if (matchesData.matches) {
+                        setMatches(matchesData.matches);
+                    }
+                    
+                    const scorersData = await scorersRes.json();
+                    if (scorersData.scorers) {
+                        setScorers(scorersData.scorers.slice(0, 20));
+                    }
+                    
+                    setLastUpdate(new Date());
+                } catch (err) {
+                    setError(`Failed to load: ${err.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            }
+
+            useEffect(() => {
+                loadData();
+                const interval = setInterval(loadData, 300000);
+                return () => clearInterval(interval);
+            }, []);
+
+            // Cleanup chart on unmount or tab change
+            useEffect(() => {
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                        chartInstance.current = null;
+                    }
+                };
+            }, [activeTab]);
+
+            function formatDate(dateStr) {
+                return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+
+            function formatTime(dateStr) {
+                return new Date(dateStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            }
+
+            function getDayOfWeek(dateStr) {
+                return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' });
+            }
+
+            function getTeamMatches(teamId, limit = 10) {
+                return matches.filter(m => 
+                    m.status === 'FINISHED' && 
+                    (m.homeTeam.id === teamId || m.awayTeam.id === teamId)
+                ).slice(0, limit);
+            }
+
+            function getNextMatch(teamId) {
+                return matches.find(m => 
+                    (m.status === 'TIMED' || m.status === 'SCHEDULED') && 
+                    (m.homeTeam.id === teamId || m.awayTeam.id === teamId)
+                );
+            }
+
+            function getFormGuide(teamId, limit = 5) {
+                return getTeamMatches(teamId, limit).reverse().map(m => {
+                    const isHome = m.homeTeam.id === teamId;
+                    const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+                    const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+                    return teamScore > oppScore ? 'W' : teamScore < oppScore ? 'L' : 'D';
+                });
+            }
+
+            function getFormStreak(teamId) {
+                const form = getFormGuide(teamId, 10);
+                if (form.length === 0) return null;
+                
+                let streak = 1;
+                const current = form[form.length - 1];
+                
+                for (let i = form.length - 2; i >= 0; i--) {
+                    if (form[i] === current) streak++;
+                    else break;
+                }
+                
+                if (current === 'W') return `${streak} win${streak > 1 ? 's' : ''} in a row`;
+                if (current === 'L') return `${streak} loss${streak > 1 ? 'es' : ''} in a row`;
+                return `${streak} draw${streak > 1 ? 's' : ''} in a row`;
+            }
+
+            function getHomeAwayRecord(teamId) {
+                const homeMatches = matches.filter(m => m.status === 'FINISHED' && m.homeTeam.id === teamId);
+                const awayMatches = matches.filter(m => m.status === 'FINISHED' && m.awayTeam.id === teamId);
+                
+                const calcRecord = (matches, isHome) => {
+                    let w = 0, d = 0, l = 0;
+                    matches.forEach(m => {
+                        const score = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+                        const opp = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+                        if (score > opp) w++;
+                        else if (score < opp) l++;
+                        else d++;
+                    });
+                    return { w, d, l, played: matches.length };
+                };
+                
+                return {
+                    home: calcRecord(homeMatches, true),
+                    away: calcRecord(awayMatches, false)
+                };
+            }
+
+            function getSortedStandings() {
+                const sorted = [...standings];
+                if (sortBy === 'form') {
+                    return sorted.sort((a, b) => {
+                        const aWins = getFormGuide(a.team.id).filter(r => r === 'W').length;
+                        const bWins = getFormGuide(b.team.id).filter(r => r === 'W').length;
+                        return bWins - aWins;
+                    });
+                }
+                if (sortBy === 'goals') {
+                    return sorted.sort((a, b) => b.goalsFor - a.goalsFor);
+                }
+                if (sortBy === 'defense') {
+                    return sorted.sort((a, b) => a.goalsAgainst - b.goalsAgainst);
+                }
+                return sorted.sort((a, b) => a.position - b.position);
+            }
+
+            // Calculate accumulated points per matchday for visualization
+            function calculatePointsProgression() {
+                const progression = {};
+                
+                standings.forEach(team => {
+                    progression[team.team.id] = {
+                        name: team.team.shortName,
+                        crest: team.team.crest,
+                        data: [0] // Start with 0 points
+                    };
+                });
+
+                // Get all finished matches sorted by matchday
+                const finishedMatches = matches
+                    .filter(m => m.status === 'FINISHED' && m.matchday)
+                    .sort((a, b) => a.matchday - b.matchday);
+
+                const maxMatchday = Math.max(...finishedMatches.map(m => m.matchday));
+
+                for (let md = 1; md <= maxMatchday; md++) {
+                    const mdMatches = finishedMatches.filter(m => m.matchday === md);
+                    
+                    standings.forEach(team => {
+                        const lastPoints = progression[team.team.id].data[progression[team.team.id].data.length - 1];
+                        const match = mdMatches.find(m => 
+                            m.homeTeam.id === team.team.id || m.awayTeam.id === team.team.id
+                        );
+
+                        if (match) {
+                            const isHome = match.homeTeam.id === team.team.id;
+                            const teamScore = isHome ? match.score.fullTime.home : match.score.fullTime.away;
+                            const oppScore = isHome ? match.score.fullTime.away : match.score.fullTime.home;
+                            const points = teamScore > oppScore ? 3 : teamScore === oppScore ? 1 : 0;
+                            progression[team.team.id].data.push(lastPoints + points);
+                        } else {
+                            progression[team.team.id].data.push(lastPoints);
+                        }
+                    });
+                }
+
+                return { progression, maxMatchday };
+            }
+            
+            async function fetchGuardianArticle(homeTeam, awayTeam, type, matchId) {
+                    const cacheKey = `${matchId}-${type}`;
+                    
+                    // Check if already loaded
+                    if (guardianArticles[cacheKey]) {
+                        return;
+                    }
+                    
+                    setLoadingArticles(prev => ({ ...prev, [cacheKey]: true }));
+                    
+                    try {
+                        const response = await fetch(
+                            `${BACKEND_URL}/api/guardian/match?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}&type=${type}`
+                        );
+                        const data = await response.json();
+                        
+                        if (data.success && data.articles.length > 0) {
+                            setGuardianArticles(prev => ({
+                                ...prev,
+                                [cacheKey]: data.articles[0]
+                            }));
+                        } else {
+                            setGuardianArticles(prev => ({
+                                ...prev,
+                                [cacheKey]: null
+                            }));
+                        }
+                    } catch (error) {
+                        console.error('Error fetching Guardian article:', error);
+                        setGuardianArticles(prev => ({
+                            ...prev,
+                            [cacheKey]: null
+                        }));
+                    } finally {
+                        setLoadingArticles(prev => ({ ...prev, [cacheKey]: false }));
+                    }
+                }
+                
+                function toggleMatchExpansion(matchId, homeTeam, awayTeam, status) {
+                    if (expandedMatch === matchId) {
+                        setExpandedMatch(null);
+                    } else {
+                        setExpandedMatch(matchId);
+                        const type = status === 'FINISHED' ? 'report' : 'preview';
+                        fetchGuardianArticle(homeTeam, awayTeam, type, matchId);
+                    }
+                }
+                
+                function stripHtml(html) {
+                    if (!html) return '';
+                    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+                }
+                
+                function truncateText(text, maxLength = 200) {
+                    if (!text || text.length <= maxLength) return text;
+                    return text.substring(0, maxLength) + '...';
+                }
+            // Render points progression chart
+            useEffect(() => {
+                if (activeTab === 'visualization' && standings.length > 0 && matches.length > 0 && chartRef.current) {
+                    const { progression, maxMatchday } = calculatePointsProgression();
+                    
+                    // Destroy existing chart
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+
+                    const colors = [
+                        '#10b981', '#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6',
+                        '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6',
+                        '#6366f1', '#a855f7', '#eab308', '#22c55e', '#0ea5e9',
+                        '#f43f5e', '#d946ef', '#facc15', '#4ade80', '#38bdf8'
+                    ];
+
+                    const datasets = Object.values(progression).map((team, idx) => ({
+                        label: team.name,
+                        data: team.data,
+                        borderColor: colors[idx % colors.length],
+                        backgroundColor: colors[idx % colors.length] + '20',
+                        borderWidth: 2,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    }));
+
+                    const ctx = chartRef.current.getContext('2d');
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: Array.from({ length: maxMatchday + 1 }, (_, i) => i),
+                            datasets: datasets
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: true,
+                                    position: 'right',
+                                    labels: {
+                                        color: '#fff',
+                                        font: { size: 10 },
+                                        boxWidth: 12,
+                                        padding: 8,
+                                        usePointStyle: true
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Points Accumulated by Matchday',
+                                    color: '#fff',
+                                    font: { size: 16, weight: 'bold' }
+                                },
+                                tooltip: {
+                                    mode: 'index',
+                                    intersect: false
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    title: {
+                                        display: true,
+                                        text: 'Matchday',
+                                        color: '#fff'
+                                    },
+                                    ticks: { color: '#fff' },
+                                    grid: { color: '#ffffff20' }
+                                },
+                                y: {
+                                    title: {
+                                        display: true,
+                                        text: 'Points',
+                                        color: '#fff'
+                                    },
+                                    ticks: { color: '#fff' },
+                                    grid: { color: '#ffffff20' }
+                                }
+                            },
+                            interaction: {
+                                mode: 'nearest',
+                                axis: 'x',
+                                intersect: false
+                            }
+                        }
+                    });
+                }
+            }, [activeTab, standings, matches]);
+
+            // Get matches by week
+            function getMatchesByWeek(view) {
+                const now = new Date();
+                const startOfWeek = new Date(now);
+                startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
+                startOfWeek.setHours(0, 0, 0, 0);
+
+                let weekStart, weekEnd;
+
+                if (view === 'this week') {
+                    weekStart = startOfWeek;
+                    weekEnd = new Date(startOfWeek);
+                    weekEnd.setDate(weekEnd.getDate() + 7);
+                } else if (view === 'last week') {
+                    weekStart = new Date(startOfWeek);
+                    weekStart.setDate(weekStart.getDate() - 7);
+                    weekEnd = new Date(startOfWeek);
+                } else { // next week
+                    weekStart = new Date(startOfWeek);
+                    weekStart.setDate(weekStart.getDate() + 7);
+                    weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekEnd.getDate() + 7);
+                }
+
+                return matches.filter(m => {
+                    const matchDate = new Date(m.utcDate);
+                    return matchDate >= weekStart && matchDate < weekEnd;
+                });
+            }
+
+            function groupMatchesByDay(matchList) {
+                const grouped = {};
+                matchList.forEach(m => {
+                    const date = new Date(m.utcDate).toDateString();
+                    if (!grouped[date]) grouped[date] = [];
+                    grouped[date].push(m);
+                });
+                return grouped;
+            }
+
+            function getMatchesByMatchday(matchday) {
+                return matches.filter(m => m.matchday === matchday);
+            }
+
+            function getScorerMatches(playerId) {
+                // This is a simplified version - in reality you'd need detailed match data with goal scorers
+                // For now, we'll just return matches where the player's team played
+                const scorer = scorers.find(s => s.player.id === playerId);
+                if (!scorer) return [];
+                
+                return matches.filter(m => 
+                    m.status === 'FINISHED' &&
+                    (m.homeTeam.id === scorer.team.id || m.awayTeam.id === scorer.team.id)
+                ).slice(0, 10);
+            }
+
+            const weekMatches = getMatchesByWeek(fixturesView);
+            const groupedByDay = groupMatchesByDay(weekMatches);
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
+                    {/* Header */}
+                    <div className="bg-purple-950 text-white p-3 shadow-lg sticky top-0 z-10">
+                        <div className="flex justify-between items-center max-w-7xl mx-auto">
+                            <div className="flex items-center gap-2">
+                                <Trophy />
+                                <h1 className="text-lg font-bold">Premier League {season}</h1>
+                            </div>
+                            <button
+                                onClick={loadData}
+                                disabled={loading}
+                                className="flex items-center gap-2 bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded-lg disabled:opacity-50"
+                            >
+                                <RefreshCw spinning={loading} />
+                                <span className="text-sm">Refresh</span>
+                            </button>
+                        </div>
+                        {lastUpdate && (
+                            <div className="text-xs text-purple-300 text-center mt-2">
+                                Updated: {lastUpdate.toLocaleTimeString()}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Tabs */}
+                    <div className="bg-purple-900 border-b border-purple-700">
+                        <div className="max-w-7xl mx-auto flex overflow-x-auto">
+                            {['standings', 'fixtures', 'scorers', 'visualization'].map(tab => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setActiveTab(tab)}
+                                    className={`flex-1 py-2 px-4 text-sm font-medium whitespace-nowrap ${
+                                        activeTab === tab ? 'bg-purple-800 text-white border-b-2 border-white' : 'text-purple-200 hover:bg-purple-800'
+                                    }`}
+                                >
+                                    <span className="capitalize">{tab}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Content */}
+                    <div className="max-w-7xl mx-auto p-3">
+                        {error && (
+                            <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 mb-4 text-white">
+                                <div className="font-semibold mb-2">⚠️ Error</div>
+                                <div className="text-sm">{error}</div>
+                                <button onClick={loadData} className="mt-3 bg-red-600 px-4 py-2 rounded text-sm">
+                                    Try Again
+                                </button>
+                            </div>
+                        )}
+
+                        {loading && !standings.length ? (
+                            <div className="text-white text-center py-12">
+                                <RefreshCw spinning={true} />
+                                <div className="mt-2">Loading data...</div>
+                            </div>
+                        ) : (
+                            <>
+                                {/* STANDINGS */}
+                                {activeTab === 'standings' && (
+                                    <div>
+                                        <div className="mb-4 flex gap-2 flex-wrap">
+                                            <button
+                                                onClick={() => setSortBy('position')}
+                                                className={`px-3 py-1 rounded text-sm ${sortBy === 'position' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white'}`}
+                                            >
+                                                Position
+                                            </button>
+                                            <button
+                                                onClick={() => setSortBy('form')}
+                                                className={`px-3 py-1 rounded text-sm ${sortBy === 'form' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white'}`}
+                                            >
+                                                Form
+                                            </button>
+                                            <button
+                                                onClick={() => setSortBy('goals')}
+                                                className={`px-3 py-1 rounded text-sm ${sortBy === 'goals' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white'}`}
+                                            >
+                                                Goals Scored
+                                            </button>
+                                            <button
+                                                onClick={() => setSortBy('defense')}
+                                                className={`px-3 py-1 rounded text-sm ${sortBy === 'defense' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white'}`}
+                                            >
+                                                Best Defense
+                                            </button>
+                                        </div>
+
+                                        <div className="bg-white/10 rounded-lg overflow-hidden">
+                                            <div className="bg-purple-900/50 text-white text-xs font-semibold border-b border-purple-700">
+                                                <div className="grid grid-cols-12 gap-2 px-3 py-2">
+                                                    <div className="col-span-1 text-center">#</div>
+                                                    <div className="col-span-4">Team</div>
+                                                    <div className="col-span-2 text-center">Form</div>
+                                                    <div className="col-span-1 text-center">P</div>
+                                                    <div className="col-span-1 text-center">GF</div>
+                                                    <div className="col-span-1 text-center">GA</div>
+                                                    <div className="col-span-1 text-center">GD</div>
+                                                    <div className="col-span-1 text-center">Pts</div>
+                                                </div>
+                                            </div>
+                                            {getSortedStandings().map((team, idx) => {
+                                                const isExpanded = expandedTeam === team.team.id;
+                                                const form = getFormGuide(team.team.id);
+                                                const streak = getFormStreak(team.team.id);
+                                                const homeAway = getHomeAwayRecord(team.team.id);
+                                                const ppg = team.playedGames > 0 ? (team.points / team.playedGames).toFixed(2) : '0.00';
+                                                const recentMatches = getTeamMatches(team.team.id, 5);
+                                                const nextMatch = getNextMatch(team.team.id);
+                                                
+                                                return (
+                                                    <div key={idx}>
+                                                        <div 
+                                                            onClick={() => setExpandedTeam(isExpanded ? null : team.team.id)}
+                                                            className="grid grid-cols-12 gap-2 px-3 py-2 text-white text-sm border-b border-purple-800/30 items-center hover:bg-white/10 cursor-pointer"
+                                                        >
+                                                            <div className={`col-span-1 text-center font-bold ${
+                                                                team.position <= 4 ? 'text-green-400' : 
+                                                                team.position === 5 ? 'text-blue-400' :
+                                                                team.position >= 18 ? 'text-red-400' : 'text-purple-300'
+                                                            }`}>
+                                                                {sortBy === 'position' ? team.position : idx + 1}
+                                                            </div>
+                                                            <div className="col-span-4 flex items-center gap-2">
+                                                                {team.team.crest && <img src={team.team.crest} alt="" className="w-5 h-5 object-contain" />}
+                                                                <div className="flex-1">
+                                                                    <div className="text-xs font-semibold truncate">{team.team.shortName}</div>
+                                                                    <div className="text-xs text-purple-300">{ppg} PPG</div>
+                                                                </div>
+                                                                <ChevronDown isOpen={isExpanded} />
+                                                            </div>
+                                                            <div className="col-span-2 flex gap-0.5 justify-center">
+                                                                {form.map((r, i) => (
+                                                                    <div key={i} className={`form-box ${r === 'W' ? 'bg-green-500' : r === 'D' ? 'bg-yellow-500' : 'bg-red-500'}`}>
+                                                                        {r}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs">{team.playedGames}</div>
+                                                            <div className="col-span-1 text-center text-xs text-green-400">{team.goalsFor}</div>
+                                                            <div className="col-span-1 text-center text-xs text-red-400">{team.goalsAgainst}</div>
+                                                            <div className="col-span-1 text-center text-xs">{team.goalDifference > 0 ? '+' : ''}{team.goalDifference}</div>
+                                                            <div className="col-span-1 text-center font-bold text-xs">{team.points}</div>
+                                                        </div>
+                                                        {isExpanded && (
+                                                            <div className="bg-purple-900/30 px-3 py-4 border-b border-purple-800/30">
+                                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                                                    <div>
+                                                                        <div className="text-xs text-purple-300 mb-2 font-semibold">Current Form</div>
+                                                                        <div className="bg-white/5 rounded px-3 py-2">
+                                                                            <div className="text-white font-semibold">{streak}</div>
+                                                                            <div className="text-xs text-purple-200 mt-1">Last 5: {form.join('-')}</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="text-xs text-purple-300 mb-2 font-semibold">Home Record</div>
+                                                                        <div className="bg-white/5 rounded px-3 py-2">
+                                                                            <div className="text-white font-semibold">
+                                                                                {homeAway.home.w}W-{homeAway.home.d}D-{homeAway.home.l}L
+                                                                            </div>
+                                                                            <div className="text-xs text-purple-200 mt-1">{homeAway.home.played} played</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="text-xs text-purple-300 mb-2 font-semibold">Away Record</div>
+                                                                        <div className="bg-white/5 rounded px-3 py-2">
+                                                                            <div className="text-white font-semibold">
+                                                                                {homeAway.away.w}W-{homeAway.away.d}D-{homeAway.away.l}L
+                                                                            </div>
+                                                                            <div className="text-xs text-purple-200 mt-1">{homeAway.away.played} played</div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="mt-4">
+                                                                    <div className="text-xs text-purple-300 mb-2 font-semibold">Last 5 Matches (Most Recent First)</div>
+                                                                    <div className="space-y-1">
+                                                                        {recentMatches.map((m, i) => {
+                                                                            const isHome = m.homeTeam.id === team.team.id;
+                                                                            const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+                                                                            const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+                                                                            const result = teamScore > oppScore ? 'W' : teamScore < oppScore ? 'L' : 'D';
+                                                                            
+                                                                            return (
+                                                                                <div key={i} className="text-xs text-white bg-white/5 rounded px-2 py-1 flex justify-between">
+                                                                                    <span className="text-purple-300">{formatDate(m.utcDate)}</span>
+                                                                                    <span className="flex-1 text-center">
+                                                                                        {m.homeTeam.shortName} <span className="font-bold">{m.score.fullTime.home}-{m.score.fullTime.away}</span> {m.awayTeam.shortName}
+                                                                                    </span>
+                                                                                    <span className={`font-bold ${result === 'W' ? 'text-green-400' : result === 'L' ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                                        {result}
+                                                                                    </span>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                </div>
+
+                                                                {nextMatch && (
+                                                                    <div className="mt-4">
+                                                                        <div className="text-xs text-purple-300 mb-2 font-semibold">Next Match</div>
+                                                                        <div className="bg-white/5 rounded px-3 py-2">
+                                                                            <div className="text-xs text-purple-200 mb-1">
+                                                                                {formatDate(nextMatch.utcDate)} • {formatTime(nextMatch.utcDate)}
+                                                                            </div>
+                                                                            <div className="text-white font-semibold">
+                                                                                {nextMatch.homeTeam.shortName} vs {nextMatch.awayTeam.shortName}
+                                                                            </div>
+                                                                            {nextMatch.matchday && (
+                                                                                <div className="text-xs text-purple-200 mt-1">Matchday {nextMatch.matchday}</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* FIXTURES */}
+                                {activeTab === 'fixtures' && (
+                                    <div>
+                                        <div className="mb-4 flex gap-2">
+                                            <button
+                                                onClick={() => setFixturesView('last week')}
+                                                className={`px-4 py-2 rounded text-sm font-medium ${fixturesView === 'last week' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                                            >
+                                                Last Week
+                                            </button>
+                                            <button
+                                                onClick={() => setFixturesView('this week')}
+                                                className={`px-4 py-2 rounded text-sm font-medium ${fixturesView === 'this week' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                                            >
+                                                This Week
+                                            </button>
+                                            <button
+                                                onClick={() => setFixturesView('next week')}
+                                                className={`px-4 py-2 rounded text-sm font-medium ${fixturesView === 'next week' ? 'bg-purple-700 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                                            >
+                                                Next Week
+                                            </button>
+                                        </div>
+
+                                        {Object.keys(groupedByDay).length > 0 ? (
+                                            <div className="overflow-x-auto">
+                                                <div className="flex gap-4 pb-4">
+                                                    {Object.entries(groupedByDay).map(([date, dayMatches]) => (
+                                                        <div key={date} className="day-column flex-shrink-0">
+                                                            <div className="bg-purple-800 text-white text-center py-2 px-3 rounded-t-lg font-semibold">
+                                                                <div className="text-sm">{getDayOfWeek(dayMatches[0].utcDate)}</div>
+                                                                <div className="text-xs text-purple-200">{formatDate(dayMatches[0].utcDate)}</div>
+                                                            </div>
+                                                            <div className="space-y-2 mt-2">
+                                                                {dayMatches.map((m, idx) => {
+                                                                    const isExpanded = expandedMatch === m.id;
+                                                                    const articleType = m.status === 'FINISHED' ? 'report' : 'preview';
+                                                                    const cacheKey = `${m.id}-${articleType}`;
+                                                                    const article = guardianArticles[cacheKey];
+                                                                    const isLoadingArticle = loadingArticles[cacheKey];
+                                                                    
+                                                                    return (
+                                                                        <div key={idx}>
+                                                                            <div className="bg-white/10 rounded-lg p-3 text-white text-sm">
+                                                                                <div className="text-xs text-purple-300 mb-2 text-center">
+                                                                                    {formatTime(m.utcDate)}
+                                                                                </div>
+                                                                                <div className="space-y-2">
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <img src={m.homeTeam.crest} alt="" className="w-5 h-5" />
+                                                                                        <span className="flex-1 text-xs">{m.homeTeam.shortName}</span>
+                                                                                        {m.status === 'FINISHED' && (
+                                                                                            <span className="font-bold text-yellow-400">{m.score.fullTime.home}</span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <img src={m.awayTeam.crest} alt="" className="w-5 h-5" />
+                                                                                        <span className="flex-1 text-xs">{m.awayTeam.shortName}</span>
+                                                                                        {m.status === 'FINISHED' && (
+                                                                                            <span className="font-bold text-yellow-400">{m.score.fullTime.away}</span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                                {m.status !== 'FINISHED' && m.status !== 'IN_PLAY' && (
+                                                                                    <div className="text-xs text-center text-blue-300 mt-2">
+                                                                                        Upcoming
+                                                                                    </div>
+                                                                                )}
+                                                                                {m.status === 'IN_PLAY' && (
+                                                                                    <div className="text-xs text-center text-green-400 mt-2 font-bold animate-pulse">
+                                                                                        LIVE
+                                                                                    </div>
+                                                                                )}
+                                                                                <button
+                                                                                    onClick={() => toggleMatchExpansion(m.id, m.homeTeam.shortName, m.awayTeam.shortName, m.status)}
+                                                                                    className="w-full mt-3 bg-purple-600/50 hover:bg-purple-600 px-3 py-1.5 rounded text-xs flex items-center justify-center gap-2 transition-colors"
+                                                                                >
+                                                                                    <Newspaper />
+                                                                                    {m.status === 'FINISHED' ? 'Match Summary' : 'Match Preview'}
+                                                                                </button>
+                                                                            </div>
+                                                                            
+                                                                            {isExpanded && (
+                                                                                <div className="bg-purple-900/50 rounded-b-lg p-3 mt-1 mb-2">
+                                                                                    {isLoadingArticle ? (
+                                                                                        <div className="text-center text-white text-xs py-4">
+                                                                                            <RefreshCw spinning={true} />
+                                                                                            <div className="mt-2">Loading {articleType}...</div>
+                                                                                        </div>
+                                                                                    ) : article ? (
+                                                                                        <div>
+                                                                                            <div className="text-xs text-purple-300 mb-2">
+                                                                                                {m.status === 'FINISHED' ? '📰 Match Report' : '📋 Match Preview'} - The Guardian
+                                                                                            </div>
+                                                                                            <h4 className="font-semibold text-white text-sm mb-2">
+                                                                                                {article.fields?.headline || article.webTitle}
+                                                                                            </h4>
+                                                                                            {article.fields?.byline && (
+                                                                                                <div className="text-xs text-purple-200 mb-2">
+                                                                                                    By {article.fields.byline}
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {article.fields?.trailText && (
+                                                                                                <p className="text-xs text-white leading-relaxed mb-3 italic">
+                                                                                                    {article.fields.trailText}
+                                                                                                </p>
+                                                                                            )}
+                                                                                            {article.fields?.body && (
+                                                                                                <p className="text-xs text-purple-100 leading-relaxed mb-3">
+                                                                                                    {truncateText(stripHtml(article.fields.body), 300)}
+                                                                                                </p>
+                                                                                            )}
+                                                                                            <a 
+                                                                                                href={article.webUrl} 
+                                                                                                target="_blank" 
+                                                                                                rel="noopener noreferrer"
+                                                                                                className="inline-block text-xs text-purple-300 hover:text-purple-100 underline"
+                                                                                            >
+                                                                                                Read full article on The Guardian →
+                                                                                            </a>
+                                                                                        </div>
+                                                                                    ) : article === null ? (
+                                                                                        <div className="text-center text-purple-300 text-xs py-3">
+                                                                                            No {articleType} available for this match
+                                                                                        </div>
+                                                                                    ) : null}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="text-white text-center py-8 bg-white/10 rounded-lg">
+                                                No matches scheduled for {fixturesView}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* SCORERS */}
+                                {activeTab === 'scorers' && (
+                                    <div>
+                                        <h3 className="text-white font-semibold text-lg mb-4">⚽ Top Scorers</h3>
+                                        <div className="space-y-2">
+                                            {scorers.map((s, i) => {
+                                                const isExpanded = expandedScorer === s.player.id;
+                                                const scorerMatches = getScorerMatches(s.player.id);
+                                                
+                                                return (
+                                                    <div key={i}>
+                                                        <div 
+                                                            onClick={() => setExpandedScorer(isExpanded ? null : s.player.id)}
+                                                            className="bg-white/10 rounded-lg p-3 text-white flex justify-between items-center cursor-pointer hover:bg-white/20 transition-colors"
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="text-lg font-bold w-8">{i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1}</div>
+                                                                {s.team.crest && <img src={s.team.crest} alt="" className="w-8 h-8" />}
+                                                                <div>
+                                                                    <div className="font-semibold">{s.player.name}</div>
+                                                                    <div className="text-xs text-purple-200">{s.team.shortName} • {s.player.nationality}</div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="text-right">
+                                                                    <div className="text-2xl font-bold text-yellow-400">{s.goals}</div>
+                                                                    <div className="text-xs text-purple-200">
+                                                                        {s.assists || 0} assists • {s.penalties || 0} pens
+                                                                    </div>
+                                                                </div>
+                                                                <ChevronDown isOpen={isExpanded} />
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {isExpanded && (
+                                                            <div className="bg-purple-900/30 px-4 py-3 rounded-b-lg mb-2">
+                                                                <div className="text-xs text-purple-300 mb-2 font-semibold">
+                                                                    Recent {s.team.shortName} Matches
+                                                                </div>
+                                                                <div className="text-xs text-purple-200 mb-3">
+                                                                    Note: Individual goal data per match requires additional API access
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    {scorerMatches.map((m, idx) => {
+                                                                        const isHome = m.homeTeam.id === s.team.id;
+                                                                        const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+                                                                        const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+                                                                        
+                                                                        return (
+                                                                            <div key={idx} className="bg-white/5 rounded px-3 py-2 text-white">
+                                                                                <div className="flex justify-between items-center">
+                                                                                    <span className="text-purple-300">{formatDate(m.utcDate)}</span>
+                                                                                    <span className="flex-1 text-center">
+                                                                                        {m.homeTeam.shortName} <span className="font-bold text-yellow-400">{m.score.fullTime.home}-{m.score.fullTime.away}</span> {m.awayTeam.shortName}
+                                                                                    </span>
+                                                                                    <span className={`font-bold ${teamScore > oppScore ? 'text-green-400' : teamScore < oppScore ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                                        {teamScore > oppScore ? 'W' : teamScore < oppScore ? 'L' : 'D'}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* VISUALIZATION */}
+                                {activeTab === 'visualization' && (
+                                    <div>
+                                        <h3 className="text-white font-semibold text-lg mb-4 flex items-center gap-2">
+                                            <ChartLine />
+                                            Points Progression by Matchday
+                                        </h3>
+                                        <div className="bg-white/10 rounded-lg p-4">
+                                            <div style={{ height: '500px' }}>
+                                                <canvas ref={chartRef}></canvas>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 text-xs text-purple-200 text-center">
+                                            Track how each team's points accumulate throughout the season
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
+                
