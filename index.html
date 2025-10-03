@@ -88,6 +88,9 @@
             const [lastUpdate, setLastUpdate] = useState(null);
             const [sortBy, setSortBy] = useState('position');
             const [fixturesView, setFixturesView] = useState('this week');
+            const [selectedSeason, setSelectedSeason] = useState('current');
+            const [selectedTeam, setSelectedTeam] = useState('all');
+            const [lastSeasonData, setLastSeasonData] = useState({ standings: [], matches: [] });
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
 
@@ -121,6 +124,24 @@
                     const scorersData = await scorersRes.json();
                     if (scorersData.scorers) {
                         setScorers(scorersData.scorers.slice(0, 20));
+                    }
+                    
+                    // Load last season data
+                    try {
+                        const [lastStandingsRes, lastMatchesRes] = await Promise.all([
+                            fetch(`${BACKEND_URL}/api/standings/last`),
+                            fetch(`${BACKEND_URL}/api/matches/last`)
+                        ]);
+                        
+                        const lastStandingsData = await lastStandingsRes.json();
+                        const lastMatchesData = await lastMatchesRes.json();
+                        
+                        setLastSeasonData({
+                            standings: lastStandingsData.standings?.[0]?.table || [],
+                            matches: lastMatchesData.matches || []
+                        });
+                    } catch (err) {
+                        console.warn('Could not load last season data:', err);
                     }
                     
                     setLastUpdate(new Date());
@@ -240,10 +261,10 @@
             }
 
             // Calculate accumulated points per matchday for visualization
-            function calculatePointsProgression() {
+            function calculatePointsProgression(standingsData, matchesData) {
                 const progression = {};
                 
-                standings.forEach(team => {
+                standingsData.forEach(team => {
                     progression[team.team.id] = {
                         name: team.team.shortName,
                         crest: team.team.crest,
@@ -252,7 +273,7 @@
                 });
 
                 // Get all finished matches sorted by matchday
-                const finishedMatches = matches
+                const finishedMatches = matchesData
                     .filter(m => m.status === 'FINISHED' && m.matchday)
                     .sort((a, b) => a.matchday - b.matchday);
 
@@ -261,7 +282,7 @@
                 for (let md = 1; md <= maxMatchday; md++) {
                     const mdMatches = finishedMatches.filter(m => m.matchday === md);
                     
-                    standings.forEach(team => {
+                    standingsData.forEach(team => {
                         const lastPoints = progression[team.team.id].data[progression[team.team.id].data.length - 1];
                         const match = mdMatches.find(m => 
                             m.homeTeam.id === team.team.id || m.awayTeam.id === team.team.id
@@ -283,66 +304,72 @@
             }
             
             async function fetchGuardianArticle(homeTeam, awayTeam, type, matchId) {
-                    const cacheKey = `${matchId}-${type}`;
+                const cacheKey = `${matchId}-${type}`;
+                
+                // Check if already loaded
+                if (guardianArticles[cacheKey]) {
+                    return;
+                }
+                
+                setLoadingArticles(prev => ({ ...prev, [cacheKey]: true }));
+                
+                try {
+                    const response = await fetch(
+                        `${BACKEND_URL}/api/guardian/match?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}&type=${type}`
+                    );
+                    const data = await response.json();
                     
-                    // Check if already loaded
-                    if (guardianArticles[cacheKey]) {
-                        return;
-                    }
-                    
-                    setLoadingArticles(prev => ({ ...prev, [cacheKey]: true }));
-                    
-                    try {
-                        const response = await fetch(
-                            `${BACKEND_URL}/api/guardian/match?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}&type=${type}`
-                        );
-                        const data = await response.json();
-                        
-                        if (data.success && data.articles.length > 0) {
-                            setGuardianArticles(prev => ({
-                                ...prev,
-                                [cacheKey]: data.articles[0]
-                            }));
-                        } else {
-                            setGuardianArticles(prev => ({
-                                ...prev,
-                                [cacheKey]: null
-                            }));
-                        }
-                    } catch (error) {
-                        console.error('Error fetching Guardian article:', error);
+                    if (data.success && data.articles.length > 0) {
+                        setGuardianArticles(prev => ({
+                            ...prev,
+                            [cacheKey]: data.articles[0]
+                        }));
+                    } else {
                         setGuardianArticles(prev => ({
                             ...prev,
                             [cacheKey]: null
                         }));
-                    } finally {
-                        setLoadingArticles(prev => ({ ...prev, [cacheKey]: false }));
                     }
+                } catch (error) {
+                    console.error('Error fetching Guardian article:', error);
+                    setGuardianArticles(prev => ({
+                        ...prev,
+                        [cacheKey]: null
+                    }));
+                } finally {
+                    setLoadingArticles(prev => ({ ...prev, [cacheKey]: false }));
                 }
-                
-                function toggleMatchExpansion(matchId, homeTeam, awayTeam, status) {
-                    if (expandedMatch === matchId) {
-                        setExpandedMatch(null);
-                    } else {
-                        setExpandedMatch(matchId);
-                        const type = status === 'FINISHED' ? 'report' : 'preview';
-                        fetchGuardianArticle(homeTeam, awayTeam, type, matchId);
-                    }
+            }
+            
+            function toggleMatchExpansion(matchId, homeTeam, awayTeam, status) {
+                if (expandedMatch === matchId) {
+                    setExpandedMatch(null);
+                } else {
+                    setExpandedMatch(matchId);
+                    const type = status === 'FINISHED' ? 'report' : 'preview';
+                    fetchGuardianArticle(homeTeam, awayTeam, type, matchId);
                 }
-                
-                function stripHtml(html) {
-                    if (!html) return '';
-                    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-                }
-                
-                function truncateText(text, maxLength = 200) {
-                    if (!text || text.length <= maxLength) return text;
-                    return text.substring(0, maxLength) + '...';
-                }
+            }
+            
+            function stripHtml(html) {
+                if (!html) return '';
+                return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            }
+            
+            function truncateText(text, maxLength = 200) {
+                if (!text || text.length <= maxLength) return text;
+                return text.substring(0, maxLength) + '...';
+            }
+
             // Render points progression chart
             useEffect(() => {
-                if (activeTab === 'visualization' && standings.length > 0 && matches.length > 0 && chartRef.current) {
-                    const { progression, maxMatchday } = calculatePointsProgression();
+                if (activeTab === 'visualization' && chartRef.current) {
+                    const currentStandings = selectedSeason === 'current' ? standings : lastSeasonData.standings;
+                    const currentMatches = selectedSeason === 'current' ? matches : lastSeasonData.matches;
+                    
+                    if (currentStandings.length === 0 || currentMatches.length === 0) return;
+                    
+                    const { progression, maxMatchday } = calculatePointsProgression(currentStandings, currentMatches);
                     
                     // Destroy existing chart
                     if (chartInstance.current) {
@@ -356,16 +383,20 @@
                         '#f43f5e', '#d946ef', '#facc15', '#4ade80', '#38bdf8'
                     ];
 
-                    const datasets = Object.values(progression).map((team, idx) => ({
-                        label: team.name,
-                        data: team.data,
-                        borderColor: colors[idx % colors.length],
-                        backgroundColor: colors[idx % colors.length] + '20',
-                        borderWidth: 2,
-                        tension: 0.1,
-                        pointRadius: 0,
-                        pointHoverRadius: 4
-                    }));
+                    const datasets = Object.entries(progression).map(([teamId, team], idx) => {
+                        const isSelected = selectedTeam === 'all' || selectedTeam === teamId;
+                        return {
+                            label: team.name,
+                            data: team.data,
+                            borderColor: colors[idx % colors.length],
+                            backgroundColor: colors[idx % colors.length] + '20',
+                            borderWidth: isSelected ? 3 : 1,
+                            tension: 0.1,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                            hidden: selectedTeam !== 'all' && selectedTeam !== teamId
+                        };
+                    });
 
                     const ctx = chartRef.current.getContext('2d');
                     chartInstance.current = new Chart(ctx, {
@@ -379,7 +410,7 @@
                             maintainAspectRatio: false,
                             plugins: {
                                 legend: {
-                                    display: true,
+                                    display: selectedTeam === 'all',
                                     position: 'right',
                                     labels: {
                                         color: '#fff',
@@ -391,7 +422,7 @@
                                 },
                                 title: {
                                     display: true,
-                                    text: 'Points Accumulated by Matchday',
+                                    text: `Points Progression - ${selectedSeason === 'current' ? 'Current Season' : 'Last Season'}`,
                                     color: '#fff',
                                     font: { size: 16, weight: 'bold' }
                                 },
@@ -428,7 +459,7 @@
                         }
                     });
                 }
-            }, [activeTab, standings, matches]);
+            }, [activeTab, standings, matches, selectedSeason, selectedTeam, lastSeasonData]);
 
             // Get matches by week
             function getMatchesByWeek(view) {
@@ -470,13 +501,7 @@
                 return grouped;
             }
 
-            function getMatchesByMatchday(matchday) {
-                return matches.filter(m => m.matchday === matchday);
-            }
-
             function getScorerMatches(playerId) {
-                // This is a simplified version - in reality you'd need detailed match data with goal scorers
-                // For now, we'll just return matches where the player's team played
                 const scorer = scorers.find(s => s.player.id === playerId);
                 if (!scorer) return [];
                 
@@ -934,15 +959,88 @@
                                 {/* VISUALIZATION */}
                                 {activeTab === 'visualization' && (
                                     <div>
-                                        <h3 className="text-white font-semibold text-lg mb-4 flex items-center gap-2">
-                                            <ChartLine />
-                                            Points Progression by Matchday
-                                        </h3>
+                                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+                                            <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+                                                <ChartLine />
+                                                Points Progression by Matchday
+                                            </h3>
+                                            
+                                            <div className="flex flex-wrap gap-2">
+                                                {/* Season Toggle */}
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedSeason('current');
+                                                            setSelectedTeam('all');
+                                                        }}
+                                                        className={`px-4 py-2 rounded text-sm font-medium ${
+                                                            selectedSeason === 'current' 
+                                                                ? 'bg-purple-700 text-white' 
+                                                                : 'bg-white/10 text-white hover:bg-white/20'
+                                                        }`}
+                                                    >
+                                                        Current Season
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedSeason('last');
+                                                            setSelectedTeam('all');
+                                                        }}
+                                                        className={`px-4 py-2 rounded text-sm font-medium ${
+                                                            selectedSeason === 'last' 
+                                                                ? 'bg-purple-700 text-white' 
+                                                                : 'bg-white/10 text-white hover:bg-white/20'
+                                                        }`}
+                                                        disabled={lastSeasonData.standings.length === 0}
+                                                    >
+                                                        Last Season
+                                                    </button>
+                                                </div>
+                                                
+                                                {/* Team Filter */}
+                                                <select
+                                                    value={selectedTeam}
+                                                    onChange={(e) => setSelectedTeam(e.target.value)}
+                                                    className="px-4 py-2 rounded text-sm bg-white/10 text-white border border-purple-600 hover:bg-white/20"
+                                                    style={{ color: 'white' }}
+                                                >
+                                                    <option value="all" style={{ background: '#1e1b4b', color: 'white' }}>All Teams</option>
+                                                    {(selectedSeason === 'current' ? standings : lastSeasonData.standings)
+                                                        .sort((a, b) => a.team.shortName.localeCompare(b.team.shortName))
+                                                        .map(team => (
+                                                            <option key={team.team.id} value={team.team.id} style={{ background: '#1e1b4b', color: 'white' }}>
+                                                                {team.team.shortName}
+                                                            </option>
+                                                        ))
+                                                    }
+                                                </select>
+                                            </div>
+                                        </div>
+                                        
+                                        {lastSeasonData.standings.length === 0 && selectedSeason === 'last' && (
+                                            <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4 mb-4 text-white">
+                                                <div className="text-sm">Last season data is not available. This requires backend support.</div>
+                                            </div>
+                                        )}
+                                        
                                         <div className="bg-white/10 rounded-lg p-4">
                                             <div style={{ height: '500px' }}>
                                                 <canvas ref={chartRef}></canvas>
                                             </div>
                                         </div>
+                                        
+                                        {selectedTeam !== 'all' && (
+                                            <div className="mt-4 text-sm text-white bg-purple-800/50 rounded-lg p-3">
+                                                <div className="font-semibold mb-1">
+                                                    Viewing: {(selectedSeason === 'current' ? standings : lastSeasonData.standings)
+                                                        .find(t => t.team.id === selectedTeam)?.team.shortName}
+                                                </div>
+                                                <div className="text-xs text-purple-200">
+                                                    Other teams are hidden. Select "All Teams" to view the full chart.
+                                                </div>
+                                            </div>
+                                        )}
+                                        
                                         <div className="mt-4 text-xs text-purple-200 text-center">
                                             Track how each team's points accumulate throughout the season
                                         </div>
@@ -959,4 +1057,3 @@
     </script>
 </body>
 </html>
-                
