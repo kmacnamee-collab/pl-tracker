@@ -197,7 +197,7 @@
             }
 
             function getFormGuide(teamId, limit = 5) {
-                return getTeamMatches(teamId, limit).map(m => {
+                return getTeamMatches(teamId, limit).reverse().map(m => {
                     const isHome = m.homeTeam.id === teamId;
                     const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
                     const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
