@@ -18,6 +18,8 @@ const cache = {
   scorers: { data: null, timestamp: null, ttl: 600000 },   // 10 minutes
   teams: { data: null, timestamp: null, ttl: 3600000 },    // 1 hour
   competition: { data: null, timestamp: null, ttl: 86400000 }, // 24 hours
+  standingsLast: { data: null, timestamp: null, ttl: 3600000 }, // 1 hour (last season changes rarely)
+  matchesLast: { data: null, timestamp: null, ttl: 3600000 }    // 1 hour  
   guardianArticles: {} // Dynamic cache for Guardian articles by query
 };
 
@@ -159,9 +161,36 @@ app.get('/api/health', (req, res) => {
       matches: isCacheValid('matches'),
       scorers: isCacheValid('scorers'),
       teams: isCacheValid('teams'),
+      competition: isCacheValid('competition'),
+      standingsLast: isCacheValid('standingsLast'),
+      matchesLast: isCacheValid('matchesLast')	  
       competition: isCacheValid('competition')
     }
   });
+});
+
+// Get last season standings
+app.get('/api/standings/last', async (req, res) => {
+  try {
+    // Get current season to calculate last season year
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth();
+    
+    // Premier League season runs from August to May
+    // If we're before August, last season is (year-2) to (year-1)
+    // If we're after August, last season is (year-1) to year
+    let lastSeasonYear;
+    if (currentMonth < 7) { // Before August
+      lastSeasonYear = currentYear - 2;
+    } else {
+      lastSeasonYear = currentYear - 1;
+    }
+    
+    const data = await getCachedOrFetch('standingsLast', `/competitions/PL/standings?season=${lastSeasonYear}`);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch last season standings', details: error.message });
+  }
 });
 
 // Get standings
@@ -181,6 +210,28 @@ app.get('/api/matches', async (req, res) => {
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch matches', details: error.message });
+  }
+});
+
+// Get last season matches
+app.get('/api/matches/last', async (req, res) => {
+  try {
+    // Get current season to calculate last season year
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth();
+    
+    // Premier League season runs from August to May
+    let lastSeasonYear;
+    if (currentMonth < 7) { // Before August
+      lastSeasonYear = currentYear - 2;
+    } else {
+      lastSeasonYear = currentYear - 1;
+    }
+    
+    const data = await getCachedOrFetch('matchesLast', `/competitions/PL/matches?season=${lastSeasonYear}`);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch last season matches', details: error.message });
   }
 });
 
@@ -287,6 +338,8 @@ app.get('/api/guardian/team', async (req, res) => {
 // Clear cache endpoint (useful for testing)
 app.post('/api/cache/clear', (req, res) => {
   Object.keys(cache).forEach(key => {
+	cache[key].data = null;
+    cache[key].timestamp = null;
     if (key === 'guardianArticles') {
       cache[key] = {};
     } else {
