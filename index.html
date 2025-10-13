@@ -109,8 +109,11 @@
             const [lastSeasonData, setLastSeasonData] = useState({ standings: [], matches: [] });
             const [scenarioType, setScenarioType] = useState('current_form');
             const [projectedStandings, setProjectedStandings] = useState([]);
+            const [yoySelectedTeam, setYoySelectedTeam] = useState('');
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
+            const yoyChartRef = useRef(null);
+            const yoyChartInstance = useRef(null);
 
             async function loadData() {
                 setLoading(true);
@@ -129,6 +132,10 @@
                     const standingsData = await standingsRes.json();
                     if (standingsData.standings?.[0]?.table) {
                         setStandings(standingsData.standings[0].table);
+                        // Set first team as default for YoY comparison
+                        if (standingsData.standings[0].table.length > 0 && !yoySelectedTeam) {
+                            setYoySelectedTeam(standingsData.standings[0].table[0].team.id.toString());
+                        }
                         if (standingsData.season) {
                             setSeason(`${standingsData.season.startDate.slice(0,4)}-${standingsData.season.endDate.slice(0,4)}`);
                         }
@@ -182,6 +189,10 @@
                     if (chartInstance.current) {
                         chartInstance.current.destroy();
                         chartInstance.current = null;
+                    }
+                    if (yoyChartInstance.current) {
+                        yoyChartInstance.current.destroy();
+                        yoyChartInstance.current = null;
                     }
                 };
             }, [activeTab]);
@@ -435,6 +446,46 @@
 
                 return { progression, maxMatchday };
             }
+
+            // Calculate single team's points progression for YoY comparison
+            function calculateTeamProgression(teamId, standingsData, matchesData) {
+                // Find team in standings to get team name
+                const teamStanding = standingsData.find(t => t.team.id === parseInt(teamId));
+                if (!teamStanding) return null;
+
+                const progression = [0]; // Start with 0 points
+
+                // Get all finished matches for this team sorted by matchday
+                const finishedMatches = matchesData
+                    .filter(m => m.status === 'FINISHED' && m.matchday && 
+                                (m.homeTeam.id === parseInt(teamId) || m.awayTeam.id === parseInt(teamId)))
+                    .sort((a, b) => a.matchday - b.matchday);
+
+                if (finishedMatches.length === 0) return null;
+
+                const maxMatchday = Math.max(...finishedMatches.map(m => m.matchday));
+
+                for (let md = 1; md <= maxMatchday; md++) {
+                    const match = finishedMatches.find(m => m.matchday === md);
+                    const lastPoints = progression[progression.length - 1];
+
+                    if (match) {
+                        const isHome = match.homeTeam.id === parseInt(teamId);
+                        const teamScore = isHome ? match.score.fullTime.home : match.score.fullTime.away;
+                        const oppScore = isHome ? match.score.fullTime.away : match.score.fullTime.home;
+                        const points = teamScore > oppScore ? 3 : teamScore === oppScore ? 1 : 0;
+                        progression.push(lastPoints + points);
+                    } else {
+                        progression.push(lastPoints);
+                    }
+                }
+
+                return {
+                    name: teamStanding.team.shortName,
+                    data: progression,
+                    maxMatchday: maxMatchday
+                };
+            }
             
             async function fetchGuardianArticle(homeTeam, awayTeam, type, matchId) {
                 const cacheKey = `${matchId}-${type}`;
@@ -593,6 +644,134 @@
                     });
                 }
             }, [activeTab, standings, matches, selectedSeason, selectedTeam, lastSeasonData]);
+
+            // Render year-over-year comparison chart
+            useEffect(() => {
+                if (activeTab === 'visualization' && yoyChartRef.current && yoySelectedTeam) {
+                    // Check if we have data for both seasons
+                    if (standings.length === 0 || matches.length === 0 || 
+                        lastSeasonData.standings.length === 0 || lastSeasonData.matches.length === 0) {
+                        return;
+                    }
+
+                    // Calculate progression for current season
+                    const currentProgression = calculateTeamProgression(yoySelectedTeam, standings, matches);
+                    
+                    // Calculate progression for last season
+                    const lastProgression = calculateTeamProgression(yoySelectedTeam, lastSeasonData.standings, lastSeasonData.matches);
+
+                    if (!currentProgression && !lastProgression) return;
+
+                    // Destroy existing chart
+                    if (yoyChartInstance.current) {
+                        yoyChartInstance.current.destroy();
+                    }
+
+                    const maxMatchday = Math.max(
+                        currentProgression?.maxMatchday || 0,
+                        lastProgression?.maxMatchday || 0
+                    );
+
+                    const datasets = [];
+
+                    if (lastProgression) {
+                        datasets.push({
+                            label: `Last Season (${lastProgression.name})`,
+                            data: lastProgression.data,
+                            borderColor: '#94a3b8',
+                            backgroundColor: '#94a3b820',
+                            borderWidth: 3,
+                            borderDash: [5, 5],
+                            tension: 0.1,
+                            pointRadius: 3,
+                            pointHoverRadius: 6,
+                        });
+                    }
+
+                    if (currentProgression) {
+                        datasets.push({
+                            label: `This Season (${currentProgression.name})`,
+                            data: currentProgression.data,
+                            borderColor: '#8b5cf6',
+                            backgroundColor: '#8b5cf620',
+                            borderWidth: 4,
+                            tension: 0.1,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                        });
+                    }
+
+                    const ctx = yoyChartRef.current.getContext('2d');
+                    yoyChartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: Array.from({ length: maxMatchday + 1 }, (_, i) => i),
+                            datasets: datasets
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: true,
+                                    position: 'top',
+                                    labels: {
+                                        color: '#fff',
+                                        font: { size: 12 },
+                                        boxWidth: 15,
+                                        padding: 15,
+                                        usePointStyle: true
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: `Year over Year Comparison - ${currentProgression?.name || lastProgression?.name}`,
+                                    color: '#fff',
+                                    font: { size: 16, weight: 'bold' }
+                                },
+                                tooltip: {
+                                    mode: 'index',
+                                    intersect: false,
+                                    callbacks: {
+                                        title: function(context) {
+                                            return `Matchday ${context[0].label}`;
+                                        },
+                                        label: function(context) {
+                                            return `${context.dataset.label}: ${context.parsed.y} points`;
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    title: {
+                                        display: true,
+                                        text: 'Matchday',
+                                        color: '#fff'
+                                    },
+                                    ticks: { color: '#fff' },
+                                    grid: { color: '#ffffff20' }
+                                },
+                                y: {
+                                    title: {
+                                        display: true,
+                                        text: 'Points',
+                                        color: '#fff'
+                                    },
+                                    ticks: { color: '#fff' },
+                                    grid: { color: '#ffffff20' },
+                                    beginAtZero: true
+                                }
+                            },
+                            interaction: {
+                                mode: 'nearest',
+                                axis: 'x',
+                                intersect: false
+                            }
+                        }
+                    });
+                }
+            }, [activeTab, yoySelectedTeam, standings, matches, lastSeasonData]);
 
             // Get matches by week
             function getMatchesByWeek(view) {
@@ -1176,6 +1355,63 @@
                                         
                                         <div className="mt-4 text-xs text-purple-200 text-center">
                                             Track how each team's points accumulate throughout the season
+                                        </div>
+
+                                        {/* YEAR OVER YEAR COMPARISON */}
+                                        <div className="mt-12 border-t border-purple-700 pt-8">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+                                                <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+                                                    <ChartLine />
+                                                    Year over Year Comparison
+                                                </h3>
+                                                
+                                                <div className="flex gap-2 items-center">
+                                                    <span className="text-white text-sm">Select Team:</span>
+                                                    <select
+                                                        value={yoySelectedTeam}
+                                                        onChange={(e) => setYoySelectedTeam(e.target.value)}
+                                                        className="px-4 py-2 rounded text-sm bg-white/10 text-white border border-purple-600 hover:bg-white/20"
+                                                        style={{ color: 'white' }}
+                                                    >
+                                                        {standings
+                                                            .sort((a, b) => a.team.shortName.localeCompare(b.team.shortName))
+                                                            .map(team => (
+                                                                <option key={team.team.id} value={team.team.id} style={{ background: '#1e1b4b', color: 'white' }}>
+                                                                    {team.team.shortName}
+                                                                </option>
+                                                            ))
+                                                        }
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            {lastSeasonData.standings.length === 0 ? (
+                                                <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4 text-white">
+                                                    <div className="text-sm">Last season data is not available. This requires backend support.</div>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="bg-white/10 rounded-lg p-4">
+                                                        <div style={{ height: '400px' }}>
+                                                            <canvas ref={yoyChartRef}></canvas>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="mt-4 text-sm text-white bg-purple-800/50 rounded-lg p-3">
+                                                        <div className="font-semibold mb-2">Reading the Chart:</div>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                                            <div>• <span className="text-purple-300">Solid line</span>: Current season progress</div>
+                                                            <div>• <span className="text-gray-400">Dashed line</span>: Last season for comparison</div>
+                                                            <div>• Higher line = Better performance</div>
+                                                            <div>• Steeper slope = More points gained recently</div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="mt-4 text-xs text-purple-200 text-center">
+                                                        Compare how the selected team is performing this season versus last season
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 )}
