@@ -184,7 +184,9 @@
                 return matches.filter(m => 
                     m.status === 'FINISHED' && 
                     (m.homeTeam.id === teamId || m.awayTeam.id === teamId)
-                ).slice(0, limit);
+                )
+                    .sort((a, b) => new Date(b.utcDate) - new Date(a.utcDate))
+                    .slice(0, limit);
             }
 
             function getNextMatch(teamId) {
