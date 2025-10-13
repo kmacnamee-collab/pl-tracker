@@ -69,6 +69,22 @@
                 <path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/>
             </svg>
         );
+
+        const Calculator = () => (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="4" y="2" width="16" height="20" rx="2"/>
+                <line x1="8" y1="6" x2="16" y2="6"/>
+                <line x1="16" y1="10" x2="16" y2="10"/>
+                <line x1="12" y1="10" x2="12" y2="10"/>
+                <line x1="8" y1="10" x2="8" y2="10"/>
+                <line x1="16" y1="14" x2="16" y2="14"/>
+                <line x1="12" y1="14" x2="12" y2="14"/>
+                <line x1="8" y1="14" x2="8" y2="14"/>
+                <line x1="16" y1="18" x2="16" y2="18"/>
+                <line x1="12" y1="18" x2="12" y2="18"/>
+                <line x1="8" y1="18" x2="8" y2="18"/>
+            </svg>
+        );
         
         function App() {
             const BACKEND_URL = 'https://pl-tracker-api.onrender.com';
@@ -91,6 +107,8 @@
             const [selectedSeason, setSelectedSeason] = useState('current');
             const [selectedTeam, setSelectedTeam] = useState('all');
             const [lastSeasonData, setLastSeasonData] = useState({ standings: [], matches: [] });
+            const [scenarioType, setScenarioType] = useState('current_form');
+            const [projectedStandings, setProjectedStandings] = useState([]);
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
 
@@ -167,6 +185,13 @@
                     }
                 };
             }, [activeTab]);
+
+            // Calculate scenarios when tab is active or scenario type changes
+            useEffect(() => {
+                if (activeTab === 'scenarios' && standings.length > 0 && matches.length > 0) {
+                    calculateScenario(scenarioType);
+                }
+            }, [activeTab, scenarioType, standings, matches]);
 
             function formatDate(dateStr) {
                 return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -260,6 +285,142 @@
                     return sorted.sort((a, b) => a.goalsAgainst - b.goalsAgainst);
                 }
                 return sorted.sort((a, b) => a.position - b.position);
+            }
+
+            // Scenario Planning Functions
+            function getRemainingMatches(teamId) {
+                return matches.filter(m => 
+                    (m.status === 'TIMED' || m.status === 'SCHEDULED') &&
+                    (m.homeTeam.id === teamId || m.awayTeam.id === teamId)
+                );
+            }
+
+            function calculateScenario(scenario) {
+                const projected = standings.map(team => {
+                    const remainingMatches = getRemainingMatches(team.team.id);
+                    const currentPoints = team.points;
+                    let projectedPoints = currentPoints;
+                    let projectedGF = team.goalsFor;
+                    let projectedGA = team.goalsAgainst;
+
+                    const ppg = team.playedGames > 0 ? team.points / team.playedGames : 0;
+                    const recentForm = getFormGuide(team.team.id, 5);
+                    const recentPPG = recentForm.length > 0 
+                        ? recentForm.reduce((sum, r) => sum + (r === 'W' ? 3 : r === 'D' ? 1 : 0), 0) / recentForm.length
+                        : ppg;
+
+                    const homeAwayRecord = getHomeAwayRecord(team.team.id);
+                    const homePPG = homeAwayRecord.home.played > 0
+                        ? (homeAwayRecord.home.w * 3 + homeAwayRecord.home.d) / homeAwayRecord.home.played
+                        : ppg;
+                    const awayPPG = homeAwayRecord.away.played > 0
+                        ? (homeAwayRecord.away.w * 3 + homeAwayRecord.away.d) / homeAwayRecord.away.played
+                        : ppg;
+
+                    remainingMatches.forEach(match => {
+                        const isHome = match.homeTeam.id === team.team.id;
+                        let points = 0;
+                        let goalsFor = 0;
+                        let goalsAgainst = 0;
+
+                        switch (scenario) {
+                            case 'current_form':
+                                points = ppg;
+                                goalsFor = team.playedGames > 0 ? team.goalsFor / team.playedGames : 1.5;
+                                goalsAgainst = team.playedGames > 0 ? team.goalsAgainst / team.playedGames : 1.5;
+                                break;
+                            
+                            case 'recent_form':
+                                points = recentPPG;
+                                goalsFor = team.playedGames > 0 ? team.goalsFor / team.playedGames : 1.5;
+                                goalsAgainst = team.playedGames > 0 ? team.goalsAgainst / team.playedGames : 1.5;
+                                break;
+                            
+                            case 'home_advantage':
+                                if (isHome) {
+                                    points = 3; // Win all home games
+                                    goalsFor = 2;
+                                    goalsAgainst = 0.5;
+                                } else {
+                                    points = 0; // Lose all away games
+                                    goalsFor = 0.5;
+                                    goalsAgainst = 2;
+                                }
+                                break;
+                            
+                            case 'home_away_form':
+                                points = isHome ? homePPG : awayPPG;
+                                if (isHome) {
+                                    goalsFor = homeAwayRecord.home.played > 0 
+                                        ? matches.filter(m => m.status === 'FINISHED' && m.homeTeam.id === team.team.id)
+                                            .reduce((sum, m) => sum + m.score.fullTime.home, 0) / homeAwayRecord.home.played
+                                        : 1.5;
+                                    goalsAgainst = homeAwayRecord.home.played > 0
+                                        ? matches.filter(m => m.status === 'FINISHED' && m.homeTeam.id === team.team.id)
+                                            .reduce((sum, m) => sum + m.score.fullTime.away, 0) / homeAwayRecord.home.played
+                                        : 1.5;
+                                } else {
+                                    goalsFor = homeAwayRecord.away.played > 0
+                                        ? matches.filter(m => m.status === 'FINISHED' && m.awayTeam.id === team.team.id)
+                                            .reduce((sum, m) => sum + m.score.fullTime.away, 0) / homeAwayRecord.away.played
+                                        : 1.5;
+                                    goalsAgainst = homeAwayRecord.away.played > 0
+                                        ? matches.filter(m => m.status === 'FINISHED' && m.awayTeam.id === team.team.id)
+                                            .reduce((sum, m) => sum + m.score.fullTime.home, 0) / homeAwayRecord.away.played
+                                        : 1.5;
+                                }
+                                break;
+                            
+                            case 'best_case':
+                                points = 3; // Win everything
+                                goalsFor = 3;
+                                goalsAgainst = 0;
+                                break;
+                            
+                            case 'worst_case':
+                                points = 0; // Lose everything
+                                goalsFor = 0;
+                                goalsAgainst = 3;
+                                break;
+                            
+                            case 'all_draws':
+                                points = 1;
+                                goalsFor = 1;
+                                goalsAgainst = 1;
+                                break;
+                        }
+
+                        projectedPoints += points;
+                        projectedGF += goalsFor;
+                        projectedGA += goalsAgainst;
+                    });
+
+                    return {
+                        ...team,
+                        projectedPoints: Math.round(projectedPoints),
+                        projectedGF: Math.round(projectedGF),
+                        projectedGA: Math.round(projectedGA),
+                        projectedGD: Math.round(projectedGF - projectedGA),
+                        remainingGames: remainingMatches.length,
+                        pointsGain: Math.round(projectedPoints - currentPoints)
+                    };
+                });
+
+                // Sort by projected points, then by GD
+                projected.sort((a, b) => {
+                    if (b.projectedPoints !== a.projectedPoints) {
+                        return b.projectedPoints - a.projectedPoints;
+                    }
+                    return b.projectedGD - a.projectedGD;
+                });
+
+                // Add projected position
+                projected.forEach((team, idx) => {
+                    team.projectedPosition = idx + 1;
+                    team.positionChange = team.position - team.projectedPosition;
+                });
+
+                setProjectedStandings(projected);
             }
 
             // Calculate accumulated points per matchday for visualization
@@ -544,7 +705,7 @@
                     {/* Tabs */}
                     <div className="bg-purple-900 border-b border-purple-700">
                         <div className="max-w-7xl mx-auto flex overflow-x-auto">
-                            {['standings', 'fixtures', 'scorers', 'visualization'].map(tab => (
+                            {['standings', 'fixtures', 'scorers', 'visualization', 'scenarios'].map(tab => (
                                 <button
                                     key={tab}
                                     onClick={() => setActiveTab(tab)}
@@ -1045,6 +1206,215 @@
                                         
                                         <div className="mt-4 text-xs text-purple-200 text-center">
                                             Track how each team's points accumulate throughout the season
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* SCENARIO PLANNING */}
+                                {activeTab === 'scenarios' && (
+                                    <div>
+                                        <div className="mb-6">
+                                            <h3 className="text-white font-semibold text-xl mb-2 flex items-center gap-2">
+                                                <Calculator />
+                                                Season Scenario Planning
+                                            </h3>
+                                            <p className="text-purple-200 text-sm">
+                                                Project final standings based on different scenarios for remaining matches
+                                            </p>
+                                        </div>
+
+                                        <div className="mb-6 bg-white/10 rounded-lg p-4">
+                                            <div className="text-white font-semibold mb-3">Select Scenario:</div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                                <button
+                                                    onClick={() => setScenarioType('current_form')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'current_form' 
+                                                            ? 'bg-purple-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">Current Form</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Teams maintain their current PPG
+                                                    </div>
+                                                </button>
+                                                
+                                                <button
+                                                    onClick={() => setScenarioType('recent_form')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'recent_form' 
+                                                            ? 'bg-purple-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">Recent Form</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Based on last 5 matches
+                                                    </div>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setScenarioType('home_advantage')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'home_advantage' 
+                                                            ? 'bg-purple-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">Home Advantage</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Win all home, lose all away
+                                                    </div>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setScenarioType('home_away_form')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'home_away_form' 
+                                                            ? 'bg-purple-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">Home/Away Form</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Based on actual home/away records
+                                                    </div>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setScenarioType('best_case')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'best_case' 
+                                                            ? 'bg-green-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">🎉 Best Case</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Win every remaining match
+                                                    </div>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setScenarioType('worst_case')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'worst_case' 
+                                                            ? 'bg-red-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">😰 Worst Case</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Lose every remaining match
+                                                    </div>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setScenarioType('all_draws')}
+                                                    className={`p-3 rounded-lg text-left transition-all ${
+                                                        scenarioType === 'all_draws' 
+                                                            ? 'bg-yellow-700 text-white shadow-lg' 
+                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold mb-1">All Draws</div>
+                                                    <div className="text-xs opacity-80">
+                                                        Every match ends in a draw
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {projectedStandings.length > 0 && (
+                                            <div className="bg-white/10 rounded-lg overflow-hidden">
+                                                <div className="bg-purple-900/50 text-white text-xs font-semibold border-b border-purple-700">
+                                                    <div className="grid grid-cols-12 gap-2 px-3 py-2">
+                                                        <div className="col-span-1 text-center">#</div>
+                                                        <div className="col-span-3">Team</div>
+                                                        <div className="col-span-1 text-center">Current</div>
+                                                        <div className="col-span-1 text-center">Change</div>
+                                                        <div className="col-span-1 text-center">Games</div>
+                                                        <div className="col-span-1 text-center">Proj Pts</div>
+                                                        <div className="col-span-1 text-center">+/-</div>
+                                                        <div className="col-span-1 text-center">Proj GF</div>
+                                                        <div className="col-span-1 text-center">Proj GA</div>
+                                                        <div className="col-span-1 text-center">Proj GD</div>
+                                                    </div>
+                                                </div>
+                                                {projectedStandings.map((team, idx) => {
+                                                    return (
+                                                        <div 
+                                                            key={idx}
+                                                            className="grid grid-cols-12 gap-2 px-3 py-2 text-white text-sm border-b border-purple-800/30 items-center hover:bg-white/5"
+                                                        >
+                                                            <div className={`col-span-1 text-center font-bold ${
+                                                                team.projectedPosition <= 4 ? 'text-green-400' : 
+                                                                team.projectedPosition === 5 ? 'text-blue-400' :
+                                                                team.projectedPosition >= 18 ? 'text-red-400' : 'text-purple-300'
+                                                            }`}>
+                                                                {team.projectedPosition}
+                                                            </div>
+                                                            <div className="col-span-3 flex items-center gap-2">
+                                                                {team.team.crest && <img src={team.team.crest} alt="" className="w-5 h-5 object-contain" />}
+                                                                <div className="flex-1">
+                                                                    <div className="text-xs font-semibold truncate">{team.team.shortName}</div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs text-purple-300">
+                                                                {team.position}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs">
+                                                                {team.positionChange > 0 && (
+                                                                    <span className="text-green-400">↑{team.positionChange}</span>
+                                                                )}
+                                                                {team.positionChange < 0 && (
+                                                                    <span className="text-red-400">↓{Math.abs(team.positionChange)}</span>
+                                                                )}
+                                                                {team.positionChange === 0 && (
+                                                                    <span className="text-gray-400">-</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs text-purple-300">
+                                                                {team.remainingGames}
+                                                            </div>
+                                                            <div className="col-span-1 text-center font-bold text-xs text-yellow-400">
+                                                                {team.projectedPoints}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs">
+                                                                <span className={team.pointsGain > 0 ? 'text-green-400' : team.pointsGain < 0 ? 'text-red-400' : 'text-gray-400'}>
+                                                                    {team.pointsGain > 0 ? '+' : ''}{team.pointsGain}
+                                                                </span>
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs text-green-400">
+                                                                {team.projectedGF}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs text-red-400">
+                                                                {team.projectedGA}
+                                                            </div>
+                                                            <div className="col-span-1 text-center text-xs">
+                                                                {team.projectedGD > 0 ? '+' : ''}{team.projectedGD}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+
+                                        <div className="mt-6 bg-purple-800/30 rounded-lg p-4 text-white">
+                                            <div className="text-sm font-semibold mb-2">Legend:</div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                                <div>• <span className="text-green-400">Green positions</span>: Champions League</div>
+                                                <div>• <span className="text-blue-400">Blue position</span>: Europa League</div>
+                                                <div>• <span className="text-red-400">Red positions</span>: Relegation zone</div>
+                                                <div>• <span className="text-yellow-400">Proj Pts</span>: Projected final points</div>
+                                                <div>• <span className="text-green-400">↑</span>: Moving up in standings</div>
+                                                <div>• <span className="text-red-400">↓</span>: Moving down in standings</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 text-xs text-purple-200 text-center">
+                                            Note: Projections are estimates based on the selected scenario. Actual results will vary.
                                         </div>
                                     </div>
                                 )}
