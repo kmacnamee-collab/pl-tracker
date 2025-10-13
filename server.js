@@ -19,7 +19,7 @@ const cache = {
   teams: { data: null, timestamp: null, ttl: 3600000 },    // 1 hour
   competition: { data: null, timestamp: null, ttl: 86400000 }, // 24 hours
   standingsLast: { data: null, timestamp: null, ttl: 3600000 }, // 1 hour (last season changes rarely)
-  matchesLast: { data: null, timestamp: null, ttl: 3600000 }    // 1 hour  
+  matchesLast: { data: null, timestamp: null, ttl: 3600000 },    // 1 hour  
   guardianArticles: {} // Dynamic cache for Guardian articles by query
 };
 
