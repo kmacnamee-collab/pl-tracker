@@ -336,18 +336,6 @@
                                 goalsAgainst = team.playedGames > 0 ? team.goalsAgainst / team.playedGames : 1.5;
                                 break;
                             
-                            case 'home_advantage':
-                                if (isHome) {
-                                    points = 3; // Win all home games
-                                    goalsFor = 2;
-                                    goalsAgainst = 0.5;
-                                } else {
-                                    points = 0; // Lose all away games
-                                    goalsFor = 0.5;
-                                    goalsAgainst = 2;
-                                }
-                                break;
-                            
                             case 'home_away_form':
                                 points = isHome ? homePPG : awayPPG;
                                 if (isHome) {
@@ -369,24 +357,6 @@
                                             .reduce((sum, m) => sum + m.score.fullTime.home, 0) / homeAwayRecord.away.played
                                         : 1.5;
                                 }
-                                break;
-                            
-                            case 'best_case':
-                                points = 3; // Win everything
-                                goalsFor = 3;
-                                goalsAgainst = 0;
-                                break;
-                            
-                            case 'worst_case':
-                                points = 0; // Lose everything
-                                goalsFor = 0;
-                                goalsAgainst = 3;
-                                break;
-                            
-                            case 'all_draws':
-                                points = 1;
-                                goalsFor = 1;
-                                goalsAgainst = 1;
                                 break;
                         }
 
@@ -1225,7 +1195,7 @@
 
                                         <div className="mb-6 bg-white/10 rounded-lg p-4">
                                             <div className="text-white font-semibold mb-3">Select Scenario:</div>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                                 <button
                                                     onClick={() => setScenarioType('current_form')}
                                                     className={`p-3 rounded-lg text-left transition-all ${
@@ -1255,20 +1225,6 @@
                                                 </button>
 
                                                 <button
-                                                    onClick={() => setScenarioType('home_advantage')}
-                                                    className={`p-3 rounded-lg text-left transition-all ${
-                                                        scenarioType === 'home_advantage' 
-                                                            ? 'bg-purple-700 text-white shadow-lg' 
-                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <div className="font-semibold mb-1">Home Advantage</div>
-                                                    <div className="text-xs opacity-80">
-                                                        Win all home, lose all away
-                                                    </div>
-                                                </button>
-
-                                                <button
                                                     onClick={() => setScenarioType('home_away_form')}
                                                     className={`p-3 rounded-lg text-left transition-all ${
                                                         scenarioType === 'home_away_form' 
@@ -1279,48 +1235,6 @@
                                                     <div className="font-semibold mb-1">Home/Away Form</div>
                                                     <div className="text-xs opacity-80">
                                                         Based on actual home/away records
-                                                    </div>
-                                                </button>
-
-                                                <button
-                                                    onClick={() => setScenarioType('best_case')}
-                                                    className={`p-3 rounded-lg text-left transition-all ${
-                                                        scenarioType === 'best_case' 
-                                                            ? 'bg-green-700 text-white shadow-lg' 
-                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <div className="font-semibold mb-1">🎉 Best Case</div>
-                                                    <div className="text-xs opacity-80">
-                                                        Win every remaining match
-                                                    </div>
-                                                </button>
-
-                                                <button
-                                                    onClick={() => setScenarioType('worst_case')}
-                                                    className={`p-3 rounded-lg text-left transition-all ${
-                                                        scenarioType === 'worst_case' 
-                                                            ? 'bg-red-700 text-white shadow-lg' 
-                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <div className="font-semibold mb-1">😰 Worst Case</div>
-                                                    <div className="text-xs opacity-80">
-                                                        Lose every remaining match
-                                                    </div>
-                                                </button>
-
-                                                <button
-                                                    onClick={() => setScenarioType('all_draws')}
-                                                    className={`p-3 rounded-lg text-left transition-all ${
-                                                        scenarioType === 'all_draws' 
-                                                            ? 'bg-yellow-700 text-white shadow-lg' 
-                                                            : 'bg-white/5 text-purple-200 hover:bg-white/10'
-                                                    }`}
-                                                >
-                                                    <div className="font-semibold mb-1">All Draws</div>
-                                                    <div className="text-xs opacity-80">
-                                                        Every match ends in a draw
                                                     </div>
                                                 </button>
                                             </div>
