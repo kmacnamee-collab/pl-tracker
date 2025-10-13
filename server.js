@@ -163,7 +163,7 @@ app.get('/api/health', (req, res) => {
       teams: isCacheValid('teams'),
       competition: isCacheValid('competition'),
       standingsLast: isCacheValid('standingsLast'),
-      matchesLast: isCacheValid('matchesLast')	  
+      matchesLast: isCacheValid('matchesLast'),	  
       competition: isCacheValid('competition')
     }
   });
