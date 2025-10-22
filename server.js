@@ -26,7 +26,7 @@ const cache = {
 // Helper function to check if cache is valid
 function isCacheValid(cacheKey) {
   const cacheEntry = cache[cacheKey];
-  if (!cacheEntry.data || !cacheEntry.timestamp) return false;
+  if (!cacheEntry || !cacheEntry.data || !cacheEntry.timestamp) return false;
   return (Date.now() - cacheEntry.timestamp) < cacheEntry.ttl;
 }
 
@@ -36,9 +36,15 @@ async function getCachedOrFetch(cacheKey, endpoint) {
     console.log(`✓ Cache hit: ${cacheKey}`);
     return cache[cacheKey].data;
   }
-  
+
   console.log(`⟳ Cache miss: ${cacheKey}, fetching...`);
   const data = await fetchFootballData(endpoint);
+
+  // Initialize cache entry if it doesn't exist (for dynamic keys like head2head)
+  if (!cache[cacheKey]) {
+    cache[cacheKey] = { data: null, timestamp: null, ttl: 300000 }; // Default 5 minute TTL
+  }
+
   cache[cacheKey].data = data;
   cache[cacheKey].timestamp = Date.now();
   return data;
