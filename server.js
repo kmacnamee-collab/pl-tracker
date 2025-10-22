@@ -117,28 +117,63 @@ async function fetchGuardianData(endpoint, params = {}) {
   }
 }
 
+// Team name normalization map - maps short names to variations Guardian might use
+const TEAM_NAME_VARIATIONS = {
+  'Man City': ['Manchester City', 'Man City'],
+  'Man Utd': ['Manchester United', 'Man Utd', 'Manchester Utd'],
+  'Spurs': ['Tottenham', 'Spurs', 'Tottenham Hotspur'],
+  'Newcastle': ['Newcastle', 'Newcastle United'],
+  'West Ham': ['West Ham', 'West Ham United'],
+  'Wolves': ['Wolves', 'Wolverhampton', 'Wolverhampton Wanderers'],
+  'Brighton': ['Brighton', 'Brighton & Hove Albion', 'Brighton and Hove Albion'],
+  'Nott\'m Forest': ['Nottingham Forest', 'Nott\'m Forest', 'Forest'],
+  'Leicester': ['Leicester', 'Leicester City'],
+  'Bournemouth': ['Bournemouth', 'AFC Bournemouth'],
+  'Crystal Palace': ['Crystal Palace', 'Palace'],
+  'Ipswich': ['Ipswich', 'Ipswich Town'],
+  'Everton': ['Everton'],
+  'Arsenal': ['Arsenal'],
+  'Liverpool': ['Liverpool'],
+  'Chelsea': ['Chelsea'],
+  'Aston Villa': ['Aston Villa', 'Villa'],
+  'Fulham': ['Fulham'],
+  'Brentford': ['Brentford'],
+  'Southampton': ['Southampton']
+};
+
+// Helper function to get team name variations
+function getTeamVariations(teamName) {
+  // Check if team name exists in our map
+  if (TEAM_NAME_VARIATIONS[teamName]) {
+    return TEAM_NAME_VARIATIONS[teamName];
+  }
+
+  // Otherwise return the original name
+  return [teamName];
+}
+
 // Helper function to search Guardian articles with caching
 async function searchGuardianArticles(query, options = {}) {
   const cacheKey = `${query}-${JSON.stringify(options)}`;
   const now = Date.now();
-  
+
   // Check cache (30 minute TTL for Guardian articles)
-  if (cache.guardianArticles[cacheKey] && 
-      cache.guardianArticles[cacheKey].timestamp && 
+  if (cache.guardianArticles[cacheKey] &&
+      cache.guardianArticles[cacheKey].timestamp &&
       (now - cache.guardianArticles[cacheKey].timestamp) < 1800000) {
     console.log(`✓ Guardian cache hit: ${query}`);
     return cache.guardianArticles[cacheKey].data;
   }
-  
+
   const params = {
     q: query,
     section: 'football',
     'page-size': options.pageSize || 5,
     ...options
   };
-  
+
   const data = await fetchGuardianData('/search', params);
-  
+
   if (data && data.response) {
     cache.guardianArticles[cacheKey] = {
       data: data.response,
@@ -146,7 +181,7 @@ async function searchGuardianArticles(query, options = {}) {
     };
     return data.response;
   }
-  
+
   return null;
 }
 
@@ -269,44 +304,108 @@ app.get('/api/competition', async (req, res) => {
 app.get('/api/guardian/match', async (req, res) => {
   try {
     const { homeTeam, awayTeam, type } = req.query; // type: 'preview' or 'report'
-    
+
     if (!homeTeam || !awayTeam) {
       return res.status(400).json({ error: 'homeTeam and awayTeam parameters required' });
     }
-    
-    // Build search query
-    let query = `"${homeTeam}" AND "${awayTeam}"`;
-    let tag = type === 'preview' ? 'tone/minutebyminute,football/series/match-previews' : 'tone/matchreports';
-    
-    const articles = await searchGuardianArticles(query, {
+
+    const tag = type === 'preview' ? 'tone/minutebyminute,football/series/match-previews' : 'tone/matchreports';
+    const searchOptions = {
       tag: tag,
-      'page-size': 3,
+      'page-size': 5,
       'order-by': 'newest'
-    });
-    
+    };
+
+    console.log(`🔍 Searching for match: ${homeTeam} vs ${awayTeam} (${type || 'report'})`);
+
+    // Get all possible variations of team names
+    const homeVariations = getTeamVariations(homeTeam);
+    const awayVariations = getTeamVariations(awayTeam);
+
+    // Strategy 1: Try exact match with original names (quoted for exact phrase)
+    let query = `"${homeTeam}" AND "${awayTeam}"`;
+    console.log(`  Strategy 1: Exact match - ${query}`);
+    let articles = await searchGuardianArticles(query, searchOptions);
+
     if (articles && articles.results && articles.results.length > 0) {
-      res.json({ 
+      console.log(`  ✓ Found ${articles.results.length} articles with exact match`);
+      return res.json({
         success: true,
         articles: articles.results,
-        total: articles.total
-      });
-    } else {
-      // Try a broader search if no exact match
-      query = `${homeTeam} OR ${awayTeam}`;
-      const broadArticles = await searchGuardianArticles(query, {
-        tag: tag,
-        'page-size': 3,
-        'order-by': 'newest'
-      });
-      
-      res.json({ 
-        success: true,
-        articles: broadArticles?.results || [],
-        total: broadArticles?.total || 0,
-        broadSearch: true
+        total: articles.total,
+        searchStrategy: 'exact'
       });
     }
+
+    // Strategy 2: Try full team names if different from short names
+    if (homeVariations.length > 1 || awayVariations.length > 1) {
+      const fullHomeName = homeVariations[0]; // First variation is usually the full name
+      const fullAwayName = awayVariations[0];
+
+      if (fullHomeName !== homeTeam || fullAwayName !== awayTeam) {
+        query = `"${fullHomeName}" AND "${fullAwayName}"`;
+        console.log(`  Strategy 2: Full names - ${query}`);
+        articles = await searchGuardianArticles(query, searchOptions);
+
+        if (articles && articles.results && articles.results.length > 0) {
+          console.log(`  ✓ Found ${articles.results.length} articles with full names`);
+          return res.json({
+            success: true,
+            articles: articles.results,
+            total: articles.total,
+            searchStrategy: 'full-names'
+          });
+        }
+      }
+    }
+
+    // Strategy 3: Try without quotes (less strict matching)
+    query = `${homeVariations[0]} ${awayVariations[0]}`;
+    console.log(`  Strategy 3: Unquoted search - ${query}`);
+    articles = await searchGuardianArticles(query, searchOptions);
+
+    if (articles && articles.results && articles.results.length > 0) {
+      console.log(`  ✓ Found ${articles.results.length} articles with unquoted search`);
+      return res.json({
+        success: true,
+        articles: articles.results,
+        total: articles.total,
+        searchStrategy: 'unquoted'
+      });
+    }
+
+    // Strategy 4: Try alternative variations (e.g., "Spurs" instead of "Tottenham")
+    for (let i = 1; i < Math.max(homeVariations.length, awayVariations.length); i++) {
+      const homeAlt = homeVariations[i] || homeVariations[0];
+      const awayAlt = awayVariations[i] || awayVariations[0];
+
+      query = `"${homeAlt}" AND "${awayAlt}"`;
+      console.log(`  Strategy 4.${i}: Alternative variation - ${query}`);
+      articles = await searchGuardianArticles(query, searchOptions);
+
+      if (articles && articles.results && articles.results.length > 0) {
+        console.log(`  ✓ Found ${articles.results.length} articles with variation ${i}`);
+        return res.json({
+          success: true,
+          articles: articles.results,
+          total: articles.total,
+          searchStrategy: `variation-${i}`
+        });
+      }
+    }
+
+    // No results found with any strategy
+    console.log(`  ✗ No articles found for ${homeTeam} vs ${awayTeam}`);
+    res.json({
+      success: true,
+      articles: [],
+      total: 0,
+      searchStrategy: 'none',
+      message: 'No match articles found. The match may not have coverage yet, or try checking later.'
+    });
+
   } catch (error) {
+    console.error('Error in /api/guardian/match:', error);
     res.status(500).json({ error: 'Failed to fetch Guardian articles', details: error.message });
   }
 });
