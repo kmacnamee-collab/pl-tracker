@@ -434,6 +434,72 @@ app.get('/api/guardian/team', async (req, res) => {
   }
 });
 
+// Get head-to-head stats for a match
+app.get('/api/head2head/:matchId', async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const limit = req.query.limit || 10; // Default to last 10 meetings
+
+    if (!matchId) {
+      return res.status(400).json({ error: 'matchId parameter required' });
+    }
+
+    console.log(`📊 Fetching head-to-head for match ${matchId}`);
+
+    const data = await getCachedOrFetch(
+      `head2head-${matchId}`,
+      `/matches/${matchId}/head2head?limit=${limit}`
+    );
+
+    if (data && data.matches) {
+      // Calculate aggregated stats
+      const homeTeam = data.aggregates?.homeTeam?.name;
+      const awayTeam = data.aggregates?.awayTeam?.name;
+
+      const stats = {
+        homeTeam: {
+          name: homeTeam,
+          wins: data.aggregates?.homeTeam?.wins || 0,
+          draws: data.aggregates?.draws || 0,
+          losses: data.aggregates?.awayTeam?.wins || 0
+        },
+        awayTeam: {
+          name: awayTeam,
+          wins: data.aggregates?.awayTeam?.wins || 0,
+          draws: data.aggregates?.draws || 0,
+          losses: data.aggregates?.homeTeam?.wins || 0
+        },
+        totalMatches: data.aggregates?.numberOfMatches || 0,
+        recentMatches: data.matches.slice(0, 5).map(m => ({
+          date: m.utcDate,
+          homeTeam: m.homeTeam.shortName || m.homeTeam.name,
+          awayTeam: m.awayTeam.shortName || m.awayTeam.name,
+          homeScore: m.score.fullTime.home,
+          awayScore: m.score.fullTime.away,
+          winner: m.score.winner
+        }))
+      };
+
+      console.log(`✓ Found ${stats.totalMatches} previous meetings`);
+
+      res.json({
+        success: true,
+        stats: stats,
+        allMatches: data.matches
+      });
+    } else {
+      res.json({
+        success: true,
+        stats: null,
+        message: 'No previous meetings found between these teams'
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching head-to-head:', error);
+    res.status(500).json({ error: 'Failed to fetch head-to-head data', details: error.message });
+  }
+});
+
 // Clear cache endpoint (useful for testing)
 app.post('/api/cache/clear', (req, res) => {
   Object.keys(cache).forEach(key => {
