@@ -100,6 +100,7 @@
             const [expandedScorer, setExpandedScorer] = useState(null);
             const [guardianArticles, setGuardianArticles] = useState({});
             const [loadingArticles, setLoadingArticles] = useState({});
+            const [headToHeadStats, setHeadToHeadStats] = useState({});
             const [season, setSeason] = useState('');
             const [lastUpdate, setLastUpdate] = useState(null);
             const [sortBy, setSortBy] = useState('position');
@@ -534,7 +535,37 @@
                     setLoadingArticles(prev => ({ ...prev, [cacheKey]: false }));
                 }
             }
-            
+
+            async function fetchHeadToHead(matchId) {
+                // Check if already loaded
+                if (headToHeadStats[matchId]) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${BACKEND_URL}/api/head2head/${matchId}?limit=10`);
+                    const data = await response.json();
+
+                    if (data.success && data.stats) {
+                        setHeadToHeadStats(prev => ({
+                            ...prev,
+                            [matchId]: data.stats
+                        }));
+                    } else {
+                        setHeadToHeadStats(prev => ({
+                            ...prev,
+                            [matchId]: null
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Error fetching head-to-head:', error);
+                    setHeadToHeadStats(prev => ({
+                        ...prev,
+                        [matchId]: null
+                    }));
+                }
+            }
+
             function toggleMatchExpansion(matchId, homeTeam, awayTeam, status) {
                 if (expandedMatch === matchId) {
                     setExpandedMatch(null);
@@ -542,6 +573,10 @@
                     setExpandedMatch(matchId);
                     const type = status === 'FINISHED' ? 'report' : 'preview';
                     fetchGuardianArticle(homeTeam, awayTeam, type, matchId);
+                    // Also fetch head-to-head stats for preview context
+                    if (status !== 'FINISHED') {
+                        fetchHeadToHead(matchId);
+                    }
                 }
             }
             
@@ -1336,9 +1371,53 @@
                                                                                         </div>
                                                                                     ) : article ? (
                                                                                         article.noResults || article.error ? (
-                                                                                            <div className="text-center text-purple-300 text-xs py-3">
-                                                                                                {article.message}
-                                                                                            </div>
+                                                                                            // Show head-to-head stats as fallback for previews
+                                                                                            m.status !== 'FINISHED' && headToHeadStats[m.id] ? (
+                                                                                                <div className="text-white text-xs">
+                                                                                                    <div className="text-xs text-purple-300 mb-3">
+                                                                                                        📊 Head-to-Head Stats
+                                                                                                    </div>
+                                                                                                    <div className="bg-purple-800/50 rounded p-3 mb-3">
+                                                                                                        <div className="grid grid-cols-3 gap-2 text-center mb-2">
+                                                                                                            <div>
+                                                                                                                <div className="font-bold text-green-400">{headToHeadStats[m.id].homeTeam.wins}</div>
+                                                                                                                <div className="text-purple-200 text-xs">{headToHeadStats[m.id].homeTeam.name} Wins</div>
+                                                                                                            </div>
+                                                                                                            <div>
+                                                                                                                <div className="font-bold text-yellow-400">{headToHeadStats[m.id].homeTeam.draws}</div>
+                                                                                                                <div className="text-purple-200 text-xs">Draws</div>
+                                                                                                            </div>
+                                                                                                            <div>
+                                                                                                                <div className="font-bold text-green-400">{headToHeadStats[m.id].awayTeam.wins}</div>
+                                                                                                                <div className="text-purple-200 text-xs">{headToHeadStats[m.id].awayTeam.name} Wins</div>
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                        <div className="text-center text-purple-200 text-xs">
+                                                                                                            Last {headToHeadStats[m.id].totalMatches} meetings
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                    <div className="space-y-2">
+                                                                                                        <div className="font-semibold text-purple-300 mb-2">Recent Results:</div>
+                                                                                                        {headToHeadStats[m.id].recentMatches.map((match, idx) => (
+                                                                                                            <div key={idx} className="bg-purple-800/30 rounded p-2 flex justify-between items-center">
+                                                                                                                <div className="flex-1">
+                                                                                                                    <div className="text-xs">{match.homeTeam}</div>
+                                                                                                                </div>
+                                                                                                                <div className="font-bold px-3">
+                                                                                                                    {match.homeScore} - {match.awayScore}
+                                                                                                                </div>
+                                                                                                                <div className="flex-1 text-right">
+                                                                                                                    <div className="text-xs">{match.awayTeam}</div>
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <div className="text-center text-purple-300 text-xs py-3">
+                                                                                                    {article.message}
+                                                                                                </div>
+                                                                                            )
                                                                                         ) : (
                                                                                             <div>
                                                                                                 <div className="text-xs text-purple-300 mb-2">
